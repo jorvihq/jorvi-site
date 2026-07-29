@@ -177,6 +177,228 @@ paths:
         - { $ref: "#/components/parameters/clientSecret" }
       responses:
         "200": { description: Updated checkout view }
+  /v1/tokens:
+    get:
+      summary: List the tokens this merchant accepts
+      description: |
+        The platform registry, each entry marked with whether this merchant accepts it.
+        A token the merchant has never toggled falls back to the platform default.
+      responses:
+        "200": { description: "List of token: mint, symbol, decimals, class, isDefault, floor, accepted" }
+    post:
+      summary: Accept or decline a curated token
+      description: |
+        Only tokens already in the platform registry can be toggled. The floor stable
+        cannot be declined, because it is what pricing falls back to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mint]
+              properties:
+                mint: { type: string, description: Registry mint address }
+                enabled: { type: boolean, default: true }
+      responses:
+        "200": { description: The updated token }
+        "400": { description: Not in the registry, or the floor stable and cannot be declined }
+  /v1/platform/tokens:
+    get:
+      summary: The platform token registry
+      description: Every token the platform curates. Read-only here; curation is not a merchant operation.
+      responses:
+        "200": { description: List of token }
+  /v1/token_requests:
+    post:
+      summary: Ask for a token to be curated
+      description: |
+        A demand signal, not a self-service addition. The request is recorded as pending
+        and reviewed before the token becomes available to anyone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mint]
+              properties:
+                mint: { type: string, description: Solana mint address }
+                note: { type: string, maxLength: 500 }
+      responses:
+        "201": { description: token_request with id, mint and status }
+        "400": { description: mint is not a valid Solana address }
+  /v1/payment_links:
+    post:
+      summary: Create a payment link
+      description: A reusable URL that starts a mandate. The returned url is relative to the checkout host.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payee, mint, amountPerPeriod, periodSeconds]
+              properties:
+                name: { type: string, default: Subscription }
+                payee: { type: string, description: Solana address that receives settlement }
+                mint: { type: string }
+                amountPerPeriod: { type: string, description: Atomic units, decimal string }
+                periodSeconds: { type: integer }
+                trialSeconds: { type: integer }
+      responses:
+        "201": { description: payment_link with id, url, name, amountPerPeriod, periodSeconds, trialSeconds, active }
+        "400": { description: The mint is not on this merchant's accepted list }
+    get:
+      summary: List payment links
+      responses:
+        "200": { description: List of payment_link }
+  /v1/products:
+    post:
+      summary: Create a product
+      description: |
+        A subscription whose payment unlocks gated content. payee defaults to the
+        merchant's payout wallet, so one must be set first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, mint, amountPerPeriod, periodSeconds]
+              properties:
+                name: { type: string }
+                payee: { type: string, description: Defaults to the merchant's payout wallet }
+                mint: { type: string }
+                amountPerPeriod: { type: string }
+                periodSeconds: { type: integer }
+                trialSeconds: { type: integer }
+                contentTitle: { type: string }
+                contentBody: { type: string }
+      responses:
+        "201": { description: product with id, url, name, mint, amounts and content }
+        "400": { description: No payout wallet is set, so payee cannot be defaulted }
+    get:
+      summary: List products
+      responses:
+        "200": { description: List of product }
+  /v1/products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Retrieve a product
+      responses:
+        "200": { description: product }
+        "404": { description: No such product for this merchant }
+    patch:
+      summary: Update a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                contentTitle: { type: string }
+                contentBody: { type: string }
+                active: { type: boolean }
+      responses:
+        "200": { description: The updated product }
+        "404": { description: No such product for this merchant }
+  /v1/customers:
+    get:
+      summary: List subscribers
+      description: |
+        Derived from mandates and settled charges rather than stored separately, so a payer
+        appears once with their totals across every mandate they hold with this merchant.
+      responses:
+        "200": { description: "List of customer: payer, subscriptions, activeSubscriptions, totalPaid, since" }
+  /v1/metrics:
+    get:
+      summary: Windowed merchant metrics
+      description: |
+        Defaults to the trailing 30 days, compared against the 30 before it. The current
+        window is end-inclusive, so a charge settling now belongs to today.
+      parameters:
+        - { name: from, in: query, schema: { type: integer }, description: Unix seconds; defaults to 30 days before to }
+        - { name: to, in: query, schema: { type: integer }, description: Unix seconds; defaults to now }
+      responses:
+        "200":
+          description: |
+            metrics with grossVolume, payments, refunds, netVolume, mrr,
+            activeSubscriptions, newSubscriptions, a previous window and a daily series.
+  /v1/payout_wallet:
+    post:
+      summary: Set the payout wallet by signature
+      description: |
+        Proves control of the address off-chain and without gas: the wallet signs the
+        challenge message, and the ed25519 signature is verified against the address.
+        Get the message from /v1/payout_wallet/challenge first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, message, signature]
+              properties:
+                address: { type: string, description: Solana address to receive settlement }
+                message: { type: string, description: The challenge exactly as issued }
+                signature: { type: string, description: Base64 of the 64-byte ed25519 signature }
+      responses:
+        "200": { description: The updated merchant }
+        "400": { description: The signature does not verify against the address, or the challenge is stale }
+  /v1/payout_wallet/challenge:
+    get:
+      summary: Get a message for the wallet to sign
+      parameters:
+        - { name: address, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: payout_wallet_challenge with the address and the message to sign }
+  /v1/payout_wallet/link_tx:
+    get:
+      summary: Build an unsigned transaction proving wallet control
+      description: |
+        The on-chain alternative to signing a message. Returns a transaction for the wallet
+        to sign; submitting it is what proves control. Available only where the on-chain
+        prover is configured.
+      parameters:
+        - { name: address, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: payout_wallet_link_tx with the address, memo and base64 transaction }
+        "400": { description: On-chain wallet proof is not available in this deployment }
+  /v1/payout_wallet/link:
+    post:
+      summary: Set the payout wallet by signed transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, memo, signedTransaction]
+              properties:
+                address: { type: string }
+                memo: { type: string, description: The memo exactly as issued by link_tx }
+                signedTransaction: { type: string, description: Base64 of the wallet-signed transaction }
+      responses:
+        "200": { description: The updated merchant }
+        "400": { description: The proof does not verify, or on-chain proof is unavailable }
+  /v1/wallet/balance:
+    get:
+      summary: Read a wallet's token balance
+      description: |
+        Unauthenticated, because checkout runs in the payer's browser before any mandate
+        exists. It reads a public on-chain balance and returns nothing that is not already
+        readable from the chain.
+      security: []
+      parameters:
+        - { name: address, in: query, required: true, schema: { type: string } }
+        - { name: mint, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: balance with address, mint and amount in atomic units }
+        "400": { description: address or mint missing }
 components:
   securitySchemes:
     secretKey:
