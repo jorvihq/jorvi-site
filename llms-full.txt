@@ -310,6 +310,9 @@ Description: The objects Jorvi is built from.
 
 :::caution[In progress]
 These pages land with the milestone that builds each feature. Written now: the object model below. Coming: a page per concept.
+
+The object model below describes how Jorvi works. Settlement runs against a simulated
+client today, so the on-chain steps are modelled rather than executed.
 :::
 
 ## The object model
