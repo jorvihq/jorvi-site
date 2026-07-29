@@ -1,0 +1,837 @@
+# Jorvi, full documentation
+
+> The payments infrastructure for the self-custody era. Funds settle on-chain
+> directly from payer to merchant; Jorvi never takes custody.
+
+Jorvi is pre-launch. Settlement currently runs against a simulated client and an
+independent security review is a gate before any live deployment. Do not send
+real funds yet. Present tense means the feature exists today; anything unbuilt is
+explicitly marked as such.
+
+Source: https://jorvi.io
+Generated from the documentation source at build time. Do not edit by hand.
+
+---
+# What is Jorvi
+
+URL: https://jorvi.io/getting-started/what-is-jorvi/
+Description: Payments infrastructure for self-custodial digital assets, on Solana.
+
+In self-custody there is no card on file. The payer holds their own keys, so a merchant cannot simply pull funds the way a card processor does. That is the gap Jorvi closes, without ever taking custody.
+
+A payer signs one authorization that sets a **cap** and the **exact terms** of what may be charged. The merchant then charges against that authorization. Funds settle on-chain, payer to merchant, in a single hop. The cap is enforced by the chain, not by Jorvi's backend.
+
+## What Jorvi provides
+
+Three products on one rail. The status against each is the same one shown on the home page, because a list of names with no status reads as a shipped lineup.
+
+**Jorvi Pay** · *In progress*
+A self-custodial payment app for retail users. Connect a wallet, hold USDC, pay a merchant by scanning a code.
+
+**Jorvi Gateway** · *In progress*
+A merchant gateway. Mandates, charges, refunds, payment links, and signed webhooks. Settlement lands in the merchant's own wallet.
+
+**Jorvi SDK** · *Not yet published*
+TypeScript packages: `@jorvi/sdk` for your server, `@jorvi/checkout` for the browser, plus types, webhook verification, and the Solana adapter.
+
+What is working today, and what is not, is set out in [Where the project is](#where-the-project-is) below.
+
+## What Jorvi is not
+
+- Not an exchange. We do not facilitate trading.
+- Not a custodian. We never take custody of funds.
+- Not an on-ramp or off-ramp. Fiat conversion is handled by licensed third parties.
+- Not a bank or a financial institution.
+
+## Where the project is
+
+Jorvi is pre-launch. The engine, refunds, multi-tenancy, signed webhooks, hosted checkout and the TypeScript packages are built and tested. Settlement currently runs against a simulated client; the live on-chain client is the next milestone.
+
+Pages describing anything not yet built are marked. Where this documentation uses the present tense, the feature exists today.
+
+## Next
+
+- [Quickstart](/getting-started/quickstart/): accept a payment
+- [How settlement works](/getting-started/how-settlement-works/): where the money actually goes
+
+---
+
+# Quickstart
+
+URL: https://jorvi.io/getting-started/quickstart/
+Description: Create a mandate, take a charge, and verify the webhook.
+
+Accept recurring stablecoin payments on Solana without holding funds.
+
+The `@jorvi/*` packages are not published to npm yet, and settlement runs against a simulated client. The interface below is taken from the current source, so it is accurate today, but treat it as subject to change until the first release.
+
+## The shape of it
+
+A **mandate** is the payer's signed authorization: it names the payer, the payee, the token, a per-period cap, and a period. Charges execute against it. The payer can revoke it on-chain at any time.
+
+There is no "customer" object and no stored card. The mandate is the relationship.
+
+1. **Install**
+
+   ```bash
+   npm install @jorvi/sdk
+   ```
+
+2. **Create a client**
+
+   Your secret key stays on your server. It must never reach a browser.
+
+   ```ts
+   import { Jorvi } from '@jorvi/sdk';
+
+   const jorvi = new Jorvi(process.env.JORVI_SECRET_KEY!);
+   ```
+
+3. **Create a mandate**
+
+   Amounts are **strings in atomic units**, never floats. `mint` is the SPL mint
+   address of the token, so 2.00 USDC at six decimals is `'2000000'`.
+
+   ```ts
+   const mandate = await jorvi.mandates.create(
+     {
+       payer: payerWalletAddress,
+       payee: yourPayoutWalletAddress,
+       mint: usdcMintAddress,
+       amountPerPeriod: '2000000',   // 2.00 USDC
+       periodSeconds: 2592000,       // 30 days
+     },
+     { idempotencyKey: 'order-1234' },
+   );
+   ```
+
+4. **Have the payer authorize it**
+
+   In the browser. The payer signs once; the cap and the exact terms are bound
+   on-chain at this point.
+
+   ```ts
+   import { JorviCheckout, detectInjectedWallet } from '@jorvi/checkout';
+
+   const wallet = detectInjectedWallet();   // Phantom, Solflare, Backpack, and others
+   if (!wallet) throw new Error('No Solana wallet found');
+
+   const checkout = new JorviCheckout(
+     { baseUrl, mandateId, clientSecret },  // clientSecret comes from your server
+     { wallet },
+   );
+
+   await checkout.view();                    // what the payer is about to approve
+   await checkout.authorize((stage) => console.log(stage));
+   ```
+
+5. **Read what happened**
+
+   ```ts
+   await jorvi.mandates.listCharges(mandate.id);
+   await jorvi.mandates.listRefunds(mandate.id);
+   await jorvi.mandates.retrieve(mandate.id);
+   ```
+
+6. **Refund, if you need to**
+
+   The destination is not a parameter. A refund can only go back to the wallet
+   that paid.
+
+   ```ts
+   await jorvi.charges.refund(chargeId, {
+     amount: '500000',            // optional; omit for a full refund
+     reason: 'customer request',
+     idempotencyKey: 'refund-1234',
+   });
+   ```
+
+7. **Verify the webhook**
+
+   Charges settle on-chain, so your server learns about them through a signed
+   webhook. Verify before trusting the payload.
+
+   ```ts
+   import { constructEvent, SIGNATURE_HEADER } from '@jorvi/webhooks';
+
+   const event = constructEvent(
+     rawBody,                                  // the raw string, not parsed JSON
+     req.headers[SIGNATURE_HEADER],            // 'jorvi-signature'
+     process.env.JORVI_WEBHOOK_SECRET!,
+   );
+   ```
+
+   It throws `JorviSignatureError` if the header is missing or malformed, if the
+   MAC does not match, or if the timestamp falls outside the tolerance window,
+   which is 300 seconds by default. That last check is what stops a captured
+   request being replayed later.
+
+## Revoking
+
+The payer can revoke on-chain themselves, and it needs no cooperation from you
+or from us. A merchant can also revoke through the API:
+
+```ts
+await jorvi.mandates.revoke(mandate.id);
+```
+
+Once revoked, every subsequent charge fails. It is terminal.
+
+## Also on the client
+
+```ts
+jorvi.paymentLinks.create({ name, payee, mint, amountPerPeriod, periodSeconds, trialSeconds });
+jorvi.webhookEndpoints.create({ url });
+jorvi.events.list({ limit });
+jorvi.metrics.get({ from, to });
+```
+
+In test mode there are two helpers for moving time and funding a wallet:
+
+```ts
+await jorvi.test.fund({ owner, mint, amount });
+await jorvi.test.advance(2592000);   // jump a period forward
+```
+
+Keys are prefixed by mode, `sk_test_` and `sk_live_`. Test mode never touches
+mainnet. A dockerised local validator runs the real on-chain program locally, so
+you can exercise revocation and cap-exceeded paths before talking to anyone.
+
+## Next
+
+- [How settlement works](/getting-started/how-settlement-works/): where the money goes
+- [Concepts](/concepts/overview/): the object model
+
+---
+
+# How settlement works
+
+URL: https://jorvi.io/getting-started/how-settlement-works/
+Description: Where the money actually goes, and why Jorvi is never holding it.
+
+This is the page to read first if you are evaluating Jorvi against anything else. Everything else is detail.
+
+## The usual model
+
+Most gateways that accept digital assets work like a card processor. The payer pays the gateway, the gateway holds the funds, applies an exchange rate, deducts a fee, and the merchant withdraws a balance later.
+
+```mermaid
+flowchart LR
+    PAYER["Payer"]
+    PSP["Gateway balance account<br/>funds held here"]
+    OUT["Payout<br/>T+0 / T+1 / manual"]
+    MERCH["Merchant"]
+
+    PAYER -->|"pays"| PSP
+    PSP -->|"rate applied<br/>fee deducted"| OUT
+    OUT -->|"withdrawal"| MERCH
+
+    class PSP,OUT held
+```
+
+Between the sale and the payout, the merchant's money sits in someone else's account. That is what custody means, and it is what brings settlement delay, counterparty risk, and licensing.
+
+## The Jorvi model
+
+```mermaid
+flowchart TB
+    subgraph money[" "]
+        direction LR
+        PAYER["Payer<br/>own wallet"] -->|"approves once,<br/>sets a per-period cap"| AUTH["Capped, revocable<br/>authorization · on-chain"]
+        AUTH ==>|"funds move once,<br/>payer to merchant"| MERCH["Merchant<br/>own wallet"]
+    end
+    Orch["Jorvi · orchestration<br/>no balance account, nothing to withdraw"]
+    AUTH <-.->|"charge instruction<br/>settlement event"| Orch
+    Orch -.->|"signed webhook + receipt"| MERCH
+
+    class AUTH chainNode
+    class Orch orch
+```
+
+Read the solid line. Funds go payer to merchant and touch nothing else. Jorvi attaches with dotted lines only: it submits charge instructions and receives settlement events.
+
+**There is no Jorvi balance account, so there is nothing to withdraw from.**
+
+- The cap is enforced **on-chain**. A compromised Jorvi backend still cannot over-charge a payer.
+- Revoking the authorization makes future charges fail, and it needs no cooperation from Jorvi or from the merchant.
+
+## What this means in practice
+
+**You are paid in what the payer paid.** USDC on Solana arrives as USDC in your wallet. No conversion step, no rate applied by us.
+
+**There is no settlement delay to configure.** The transfer is the settlement. There is no T+1, no minimum payout, no withdrawal request.
+
+**Refunds return to the original payer**, and they work differently here than on a pooled rail. See [Refunds](#refunds) below.
+
+**Your keys stay yours.** Jorvi never asks for a private key or a seed phrase. A merchant proves ownership of a payout wallet by signing a challenge, which is a signature, not a transfer.
+
+## Refunds
+
+Money moves back through the same shape it moved forward through, which means a refund is not what it is on a card network.
+
+**A refund is a second, independent transfer, not a reversal.** An on-chain transfer is final once it settles, nothing undoes it. So a refund is a new payment in the opposite direction, from the merchant's wallet back to the payer's, authorised by the merchant.
+
+```mermaid
+flowchart LR
+    P1["Payer"] ==>|"1 · charge"| M1["Merchant"]
+    M2["Merchant"] ==>|"2 · refund, a separate transfer later"| P2["Payer"]
+```
+
+### What is enforced
+
+- **The amount can never exceed what was received.** The engine rejects it rather than warning about it.
+- **The destination is fixed to the original payer.** It is not caller-supplied, so there is no parameter an attacker could set to route a refund somewhere else. A compromised backend cannot redirect refunds.
+- **Refunds are tenant-isolated.** One merchant cannot refund another merchant's charge.
+- **The network fee for the refund transfer is paid by the refunder.** It is a real transaction and it costs what a transaction costs.
+
+### The trade-off, stated plainly
+
+Because Jorvi never holds funds, **a refund requires the merchant to still have them.**
+
+A gateway that pools settlement can reverse a refund out of a balance it controls, even after the merchant considers the money theirs. Jorvi has no such balance. If a merchant has already moved or spent the USDC, there is nothing for Jorvi to draw on and no mechanism for us to refund on their behalf.
+
+This is the direct cost of the custody model, and it is worth being clear about rather than discovering later. The same property that means nobody can freeze, delay or take your settlement also means nobody can reach into your wallet to fund a refund you did not authorise.
+
+Merchants who issue refunds regularly should keep a working balance, exactly as they would for any other outgoing payment.
+
+Settlement runs against a simulated client today. The live on-chain client is the next milestone, and this page describes the model that client implements. Do not put real funds through Jorvi until that ships and has completed an external security review.
+
+## Related
+
+- [What is Jorvi](/getting-started/what-is-jorvi/)
+- [Quickstart](/getting-started/quickstart/)
+
+---
+
+# Concepts
+
+URL: https://jorvi.io/concepts/overview/
+Description: The objects Jorvi is built from.
+
+:::caution[In progress]
+These pages land with the milestone that builds each feature. Written now: the object model below. Coming: a page per concept.
+:::
+
+## The object model
+
+**Mandate**: a payer's signed authorization, and the central object. Names the `payer`, the `payee`, the token `mint`, an `amountPerPeriod` cap and a `periodSeconds` period. Charges execute against it. Revocable by the payer, on-chain, at any time. There is no stored card and no customer object; the mandate is the relationship.
+
+**Charge**: a single execution against a mandate. Settles payer to merchant in one on-chain transfer.
+
+**Refund**: returns funds to the original payer. The destination is not a parameter; it can only be the wallet that paid.
+
+**Payment link**: a reusable way to start a mandate. Carries a `name`, `payee`, `mint`, `amountPerPeriod`, `periodSeconds` and an optional `trialSeconds`.
+
+**Webhook endpoint**: a URL you register to receive events.
+
+**Event**: everything that happens, delivered to your endpoint as a signed webhook and verifiable with `constructEvent`.
+
+Amounts are always **strings in atomic units**, never floats, and `mint` is an SPL mint address rather than a currency code.
+
+## Planned
+
+Not built yet. Listed so the direction is clear, not because you can use them today.
+
+**Handle**: a human-readable alias that will resolve to a wallet address, so a payer can be paid without anyone copying a 44-character string. An alias, not custody: it will point at a wallet the user already controls.
+
+## Reading order
+
+1. [How settlement works](/getting-started/how-settlement-works/), the money path
+2. [Quickstart](/getting-started/quickstart/), the integration
+
+---
+
+# Brand
+
+URL: https://jorvi.io/brand/
+Description: Logos, colours, typography and correct product names for Jorvi.
+
+Everything needed to represent Jorvi correctly. If you are writing about us, integrating us, or announcing something together, take the assets from here rather than from a screenshot.
+
+## About Jorvi
+
+Copy this verbatim when you need a description.
+
+> **About Jorvi.** Jorvi is payments infrastructure for the self-custody era. It provides a self-custodial payment app for retail users, a merchant gateway where funds settle directly into the merchant's own wallet, and a TypeScript SDK for developers. Funds settle on-chain directly from payer to merchant; Jorvi never takes custody. Jorvi is pre-launch.
+
+**Pronunciation: JOR-vee.**
+
+## Names
+
+<div class="brand-names">
+
+<!-- claims-ok:start. The right-hand column quotes incorrect forms so they can be forbidden -->
+
+| Correct | Never |
+|---|---|
+| **Jorvi** | JORVI, jorvi in prose |
+| **Jorvi Pay**, the self-custodial payment app | Jorvi Wallet, JorviPay, Jorvi-Pay |
+| **Jorvi Gateway**, the merchant gateway | Jorvi Merchant, the jorvi gateway |
+| **Jorvi SDK**, developer tools | Jorvi's SDK |
+| **Pay with Jorvi**, the checkout button | Pay With Jorvi |
+
+<!-- claims-ok:end -->
+
+</div>
+
+Lowercase is correct only for repository names, package names and code identifiers: `@jorvi/sdk`, `jorvi-gateway`. Never for the brand in a sentence.
+
+## Wordmark
+
+<div class="brand-grid">
+  <figure class="brand-swatch brand-swatch--paper">
+
+    <figcaption>On light surfaces</figcaption>
+  </figure>
+  <figure class="brand-swatch brand-swatch--ink">
+
+    <figcaption>On dark surfaces</figcaption>
+  </figure>
+</div>
+
+<p class="brand-dl">
+  <a href="/brand/jorvi-wordmark.svg" download>Wordmark SVG</a>
+  <a href="/brand/jorvi-wordmark-paper.svg" download>Reversed SVG</a>
+  <a href="/brand/jorvi-wordmark-ink.png" download>PNG</a>
+  <a href="/brand/jorvi-wordmark-paper.png" download>Reversed PNG</a>
+</p>
+
+## Mark
+
+<div class="brand-grid">
+  <figure class="brand-swatch brand-swatch--plain">
+
+    <figcaption>Primary</figcaption>
+  </figure>
+  <figure class="brand-swatch brand-swatch--plain">
+
+    <figcaption>Inverse</figcaption>
+  </figure>
+</div>
+
+<p class="brand-dl">
+  <a href="/brand/jorvi-icon.svg" download>Icon SVG</a>
+  <a href="/brand/jorvi-mark.svg" download>Mark only SVG</a>
+  <a href="/brand/jorvi-favicon.svg" download>Favicon SVG</a>
+  <a href="/brand/jorvi-icon-1024.png" download>1024 PNG</a>
+</p>
+
+## The dot
+
+The dot is the tittle of the `i`, the tittle of the `j`, the favicon below 32px, and the status marker in the product. It is one object doing several jobs, and it is the most recognisable part of the identity.
+
+It is always a perfect circle, and it never carries a glow, gradient or shadow.
+
+## Colour
+
+<div class="brand-colours">
+  <div><span style="background:#6501FF"></span><code>#6501FF</code> Jorvi Violet</div>
+  <div><span style="background:#8B5CFF"></span><code>#8B5CFF</code> Violet Light</div>
+  <div><span style="background:#3B00D1"></span><code>#3B00D1</code> Violet Deep</div>
+  <div><span style="background:#17181A"></span><code>#17181A</code> Ink</div>
+  <div><span style="background:#F7F7F5;border:1px solid #ccc"></span><code>#F7F7F5</code> Paper</div>
+  <div><span style="background:#0B0B0F"></span><code>#0B0B0F</code> Near-black</div>
+</div>
+
+**Jorvi Violet `#6501FF` fails contrast on dark backgrounds**: it measures 2.6:1 on near-black. Light surfaces use `#6501FF`. Dark surfaces use `#8B5CFF`, which measures 4.6:1. There are no exceptions, and a theme that carries one value into both will make every link unreadable in dark mode.
+
+## Typography
+
+**Poppins SemiBold** sets the wordmark and headings. It is OFL-licensed, so it is free to use and redistribute. The licence ships with the [font files](/brand/POPPINS-OFL.txt).
+
+**Inter** is the interface typeface, with **tabular numerals** on every monetary value, balance and fee. Proportional digits shift as amounts update and columns fail to align, which reads as unreliable in a payments product.
+
+Addresses and hashes are always monospace, truncated first four and last four: `7xKX…9fRt`.
+
+## Using the marks
+
+- Give the wordmark clear space of one tittle diameter on every side.
+- Minimum wordmark width is 90px on screen. Below that, use the mark.
+- Never recolour, stretch, skew, rotate or condense.
+- Never add a glow, gradient, shadow, outline or bevel.
+- Never place the wordmark on a busy photograph. Use a solid field.
+- Never rebuild the mark by typing a lowercase `j` in a font. Use the SVG.
+- Never put `#6501FF` on a dark background.
+
+## Contact
+
+Press, partnership and general enquiries: **[hello@jorvi.io](mailto:hello@jorvi.io)**
+
+---
+
+# Approach
+
+URL: https://jorvi.io/approach/
+Description: Why Jorvi is built around a per-period cap, what that buys, and what it costs.
+
+The [settlement page](/getting-started/how-settlement-works/) explains how Jorvi works. This explains why it is shaped that way, including the parts that are a trade-off rather than a win.
+
+## Recurring payments assume a card on file
+
+A subscription works because the merchant holds a credential and pulls against it. The customer agrees once and stops thinking about it.
+
+Self-custody removes the credential. The payer holds their own keys, so nothing can be pulled, and every renewal becomes a transfer someone has to remember to make. Subscriptions, payroll, usage billing and autonomous agents all run into the same missing piece: **there is no default way to authorize a future payment without handing over control.**
+
+## An allowance is the obvious answer, and it has a flaw
+
+The usual solution is a token approval. The payer approves a spender for some total amount, and the spender draws against it over time.
+
+It works. The flaw is in the shape of the authorization: **the amount is a total, and it depletes.**
+
+That forces a choice nobody should have to make. Approve a small total and you are back to re-approving constantly, which is the friction you were trying to remove. Approve a large total so you can forget about it, and that entire amount is spendable in a single transaction. There is no per-period ceiling to stop it.
+
+Most of the time nothing goes wrong. The problem is that the ceiling on what *can* go wrong is set by convenience rather than by intent.
+
+## A cap that resets
+
+Jorvi is built on Solana's Subscriptions and Allowances program. The payer authorizes a **per-period cap**: up to a set amount per period, revocable at any time, with the terms set by the payer.
+
+Three properties follow, and none of them are promises we make:
+
+**The ceiling is per period, not total.** An over-charge is rejected on-chain. The worst case in any period is one period's cap, no matter what any backend does.
+
+**Skipped periods do not accumulate.** A dormant authorization does not build up into a large catch-up charge.
+
+**The limit is not enforced by us.** It lives on-chain. A compromised Jorvi backend still cannot charge a payer more than they approved, because we are not the thing doing the enforcing.
+
+That last point is the reason the architecture is worth the constraints it brings.
+
+## What it costs
+
+Every design gives something up. Ours gives up these:
+
+**A refund needs the merchant to still hold the funds.** Because settlement goes straight to the merchant's wallet and we hold no balance, there is nothing for us to reverse out of. A gateway that pools settlement can claw back from an account it controls; we cannot. Merchants who refund regularly should keep a working balance. This is the direct price of never taking custody, and it is the right trade for most, but it is a real one.
+
+**One chain today.** The cap works with ordinary token accounts on Solana. Equivalent mechanisms on other chains exist but generally require a smart contract account, so coverage is narrower there. Extending is bounded work, since each chain sits behind one adapter, but Solana is where the primitive reaches the widest set of ordinary wallets.
+
+**A cap is a ceiling, not a blank cheque.** If a charge legitimately needs to exceed what the payer authorized, it fails. That is the feature working, and it means the ceiling has to be set with real usage in mind.
+
+## Where this matters most
+
+For a person paying a fixed monthly subscription, a cap is a nice property.
+
+When the spender is **software**, it stops being nice and becomes necessary. An autonomous agent holding a depleting total allowance is one bug, one bad instruction or one hijacked session away from spending all of it, in one transaction, with nothing in the way. A per-period cap bounds that by construction.
+
+It is also the one case where the person setting the limit and the person choosing the tool are the same. That is why agent payments are where we are pointing this first.
+
+## Not a novel idea, and that is the point
+
+We did not invent per-period authorization. Solana shipped it natively. Coinbase's Spend Permissions enforce the same idea on Base. ERC-7715 is standardising it for EVM wallets.
+
+Independent groups arriving at the same shape is the strongest signal available that it is the right one. We are not asking anyone to bet on an unproven mechanism. We are building the orchestration layer above one that is becoming standard: the scheduling, the retries, the refunds, the receipts, the webhooks and the developer experience, none of which the chain gives you.
+
+Pre-launch. Settlement currently runs against a simulated client that models caps, terms and revocation faithfully, and an independent security review is a gate before any live deployment. Do not send real funds yet. [What is built](/) is kept current, including the parts that are not.
+
+## Related
+
+- [How settlement works](/getting-started/how-settlement-works/): the money path, with diagrams
+- [Quickstart](/getting-started/quickstart/): the integration
+- [Sandbox](/reference/sandbox/): run the real on-chain program locally
+
+---
+
+# Privacy
+
+URL: https://jorvi.io/privacy/
+Description: What this website collects, which is almost nothing.
+
+This describes **this website**. Jorvi is pre-launch and has no product accounts, so there is no user data to describe yet. When there is, this page is replaced by a reviewed policy covering it.
+
+## What this site collects
+
+**Nothing that identifies you.**
+
+- **No analytics.** No Google Analytics, no tracking pixels, no third-party measurement of any kind.
+- **No cookies.**
+- **No accounts**, no sign-up, no contact form.
+- **No advertising** and no data shared with anyone.
+
+## What is stored on your device
+
+One item in your browser's `localStorage`:
+
+| Key | Value | Purpose |
+|---|---|---|
+| `starlight-theme` | `light` or `dark` | Remembers your theme choice |
+
+It never leaves your browser and is not readable by us. Clearing site data removes it.
+
+## Requests your browser makes
+
+Every asset is served from this domain: fonts, images, styles, scripts. **No requests are made to third-party hosts**, which is why there is no font CDN here despite the site using a webfont. A font CDN would see your IP address on every page load.
+
+Search runs entirely in your browser. Your queries are not sent anywhere.
+
+## Server logs
+
+The host serving this site keeps standard request logs, as any web server does. We do not analyse them, join them to anything, or use them to build a profile.
+
+## Email
+
+If you email `hello@jorvi.io` we keep the message so we can reply. Nothing more.
+
+## Changes
+
+This page changes when the site does. It will be replaced before any product handling real funds launches. That version needs a lawyer, and this one is a factual description rather than a legal instrument.
+
+Questions: **[hello@jorvi.io](mailto:hello@jorvi.io)**
+
+---
+
+# API reference
+
+URL: https://jorvi.io/reference/api/
+Description: Every endpoint in the OpenAPI specification, with error shapes and status values.
+
+Everything below is rendered from `openapi.yaml` at build time, not written by hand. If an endpoint changes in the specification, this page changes with it.
+
+The specification currently describes the mandate, charge, refund, webhook and checkout surface. Other route groups the server implements are **not in the specification yet**: merchant onboarding, the token registry, payout-wallet proof, metrics, and the retail endpoints. They are not on this page, and they get documented as they land in the spec rather than before.
+
+<ApiReference />
+
+## Authentication
+
+Requests carry your secret key as a bearer token:
+
+```http
+Authorization: Bearer sk_test_...
+```
+
+Keys are prefixed by mode. `sk_test_` never touches mainnet. The secret key is a **server-side credential** and must never reach a browser. The browser gets a `client_secret` scoped to a single mandate instead.
+
+## Errors
+
+Errors are returned in a structured envelope, never as a bare string:
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "parameter_missing",
+    "message": "Human-readable explanation.",
+    "param": "mint"
+  }
+}
+```
+
+`param` is present only when the problem is attributable to one field.
+
+### Codes
+
+These are the codes verified against the server source. **This list is not exhaustive.** The specification has no error schema yet, so treat `error.code` as the value to branch on, and expect codes that are not listed here.
+
+| HTTP | `type` | `code` | Meaning |
+|---|---|---|---|
+| 400 | `invalid_request_error` | `parameter_missing` | A required field was absent. `param` names it. |
+| 400 | `invalid_request_error` | `parameter_invalid` | A field was present but unusable. `param` names it. |
+| 400 | `invalid_request_error` | `mint_not_allowed` | The token is not on the platform registry. |
+| 400 | `invalid_request_error` | `mint_not_enabled` | The token is allowed platform-wide but not enabled for your account. |
+
+Branch on `error.code`, never on `error.message`. Messages are written for humans and will change.
+
+## Idempotency
+
+Mandate creation and refunds accept an idempotency key so a retried request cannot double-charge or double-refund:
+
+```ts
+await jorvi.mandates.create(input, { idempotencyKey: 'order-1234' });
+await jorvi.charges.refund(chargeId, { idempotencyKey: 'refund-1234' });
+```
+
+Use a key derived from your own order identifier, not a random value, or a retry after a network timeout will create a second object.
+
+## Related
+
+- [Supported tokens](/reference/tokens/): how a mint becomes usable
+- [Sandbox](/reference/sandbox/): test mode and the local validator
+
+---
+
+# Sandbox
+
+URL: https://jorvi.io/reference/sandbox/
+Description: Test mode, the time-travel helpers, and running the real on-chain program locally.
+
+Two ways to test, and they answer different questions.
+
+## Test mode
+
+Keys are prefixed by mode. `sk_test_` never touches mainnet.
+
+```ts
+const jorvi = new Jorvi(process.env.JORVI_SECRET_KEY!);   // sk_test_...
+```
+
+Test mode gives you two helpers that do not exist in live mode.
+
+**Fund a wallet** so a payer has something to pay with:
+
+```ts
+await jorvi.test.fund({ owner: payerWalletAddress, mint: usdcMintAddress, amount: '10000000' });
+```
+
+**Move time forward**, which is the one that matters for recurring payments. A monthly mandate is otherwise untestable without waiting a month:
+
+```ts
+await jorvi.test.advance(2592000);   // 30 days
+```
+
+That is how you exercise the second charge, the third, a retry after a failure, and the point where a mandate completes, in a few seconds rather than a quarter.
+
+## The local validator
+
+Test mode tells you whether **your integration** is right. It cannot tell you whether the **on-chain behaviour** is right, because the interesting rules live in the Solana program, not in the API.
+
+A dockerised local validator runs the **real** Subscriptions and Allowances program on your machine, with no network and no faucet.
+
+That is what lets you test the paths that matter and are otherwise hard to reach:
+
+- a charge that **exceeds the per-period cap**, which the chain rejects
+- an authorization the payer has **revoked**, after which every charge fails
+- **terms that do not match** what was signed
+
+Each of those fails on-chain. The cap is not enforced by our backend, so a mock of our backend cannot tell you the truth about any of them.
+
+If you are building against the Subscriptions program for reasons unrelated to Jorvi, the validator is still the fastest way to get a realistic local environment. It is standalone tooling and it is the first repository we are publishing.
+
+## What to test before going live
+
+1. A first charge succeeds and the webhook signature verifies.
+2. A **retried request with the same idempotency key** does not create a second charge.
+3. A charge above the cap fails, and your code handles the failure rather than assuming success.
+4. A revoked mandate fails every subsequent charge.
+5. A refund returns to the payer, and one exceeding the received amount is rejected.
+
+Settlement runs against a simulated client today. The live on-chain client is the next milestone, and an independent security review is a gate before any live deployment. Do not put real funds through Jorvi yet.
+
+## Related
+
+- [API reference](/reference/api/)
+- [Supported tokens](/reference/tokens/)
+
+---
+
+# Supported tokens
+
+URL: https://jorvi.io/reference/tokens/
+Description: How a token becomes usable, and why there is no fixed list.
+
+There is no hardcoded list of supported tokens, and that is deliberate. A mint becomes usable by passing two checks, in order.
+
+## Two tiers
+
+**1. The platform registry.** Every mint has to be present and enabled platform-wide. If it is not, the request fails:
+
+```json
+{ "error": { "type": "invalid_request_error", "code": "mint_not_allowed",
+             "message": "This token is not supported by the platform.", "param": "mint" } }
+```
+
+**2. Your account.** A mint that the platform allows still has to be accepted by your merchant account. Some are on by default; others you enable yourself. If it is allowed but not enabled for you:
+
+```json
+{ "error": { "type": "invalid_request_error", "code": "mint_not_enabled",
+             "message": "Enable this token for your account first.", "param": "mint" } }
+```
+
+The distinction matters when you are debugging. `mint_not_allowed` is not something you can fix from your side. `mint_not_enabled` is.
+
+## Mints, not currency codes
+
+Tokens are identified by **SPL mint address**, never by a symbol:
+
+```ts
+await jorvi.mandates.create({
+  payer,
+  payee,
+  mint: usdcMintAddress,   // an address, not "USDC"
+  amountPerPeriod: '2000000',
+  periodSeconds: 2592000,
+});
+```
+
+Symbols are not unique on-chain. Anyone can mint a token called USDC, so an address is the only unambiguous identifier, and resolving a symbol on the payer's behalf would be a way to route money to the wrong asset.
+
+## Amounts are atomic strings
+
+`amountPerPeriod` is a **string in the token's smallest unit**. USDC has six decimals, so:
+
+| Amount | Value to send |
+|---|---|
+| 2.00 USDC | `'2000000'` |
+| 0.50 USDC | `'500000'` |
+| 1234.56 USDC | `'1234560000'` |
+
+Strings, not numbers. A JavaScript number cannot hold large token amounts exactly, and a rounding error in a payments system is a lost or duplicated payment.
+
+## Related
+
+- [API reference](/reference/api/): the endpoints and error shapes
+- [Sandbox](/reference/sandbox/): funding a wallet with a test token
+
+---
+
+# A payment gateway should not hold your money
+
+URL: https://jorvi.io/blog/gateway-should-not-hold-your-money/
+Published: 2026-07-28
+
+Most payment gateways that accept digital assets work the way a card processor works. The payer pays the gateway. The gateway holds the funds, applies an exchange rate, deducts a fee, and credits a balance. Some time later the merchant requests a payout.
+
+Every one of those steps is a choice, and most of them exist because of an assumption inherited from card rails: that somebody in the middle has to hold the money while the transaction clears.
+
+On-chain, that assumption does not hold.
+
+## What the middle step actually costs
+
+Holding merchant funds, even briefly, changes what a company is.
+
+It brings licensing. It brings safeguarding requirements and segregated accounts. It brings counterparty risk, because the merchant's balance is now an obligation rather than an asset they hold. It brings settlement delay, because a payout cycle has to exist. And it creates a pool worth attacking, which changes the entire security model.
+
+It also creates smaller product problems that are easy to miss. Fast settlement and refunds pull against each other: money already swept out of a pool is harder to reverse, so several gateways restrict or disable refunds on their fastest settlement option. That is not a bug in their implementation. It is a consequence of the shape.
+
+## The shape without the middle step
+
+A payer signs one authorization that sets a spending cap and binds the exact terms of what may be charged. A merchant charges against that authorization. Funds move once, from the payer's wallet to the merchant's wallet, and the transfer is the settlement.
+
+Jorvi submits the charge instruction and receives the settlement event. It is never a destination.
+
+```mermaid
+flowchart TB
+    subgraph money[" "]
+        direction LR
+        PAYER["Payer<br/>own wallet"] -->|"approves once,<br/>sets a per-period cap"| AUTH["Capped, revocable<br/>authorization"]
+        AUTH ==>|"funds move once"| MERCH["Merchant<br/>own wallet"]
+    end
+    Orch["Jorvi<br/>no balance account"]
+    AUTH <-.->|"instruction / event"| Orch
+
+    class AUTH chainNode
+    class Orch orch
+```
+
+There is no third box in the middle of the solid line, and that is the entire design.
+
+Two things follow from the shape rather than from a promise:
+
+The cap is enforced on-chain, not by our backend. A compromised Jorvi server still cannot charge a payer more than they approved, because the limit does not live on our side.
+
+Revoking the authorization makes future charges fail immediately, and it requires no cooperation from the merchant or from us. The payer does it directly.
+
+**Funds settle on-chain directly from payer to merchant. Jorvi never takes custody.**
+
+## Why say it this precisely
+
+There is a looser version of this claim that is easy to write and hard to defend. "We never touch your money" is the usual phrasing, and it falls apart the moment someone asks a careful question, because a payment system does orchestrate instructions and does submit transactions. <!-- claims-ok: quotes the weak phrasing in order to reject it -->
+
+Custody is the word that is exactly true and legally meaningful. We hold no funds, at any point, for any duration. Everything else is orchestration, and orchestration is software.
+
+That distinction is worth being pedantic about, because it is the whole difference between a payments company and a regulated financial institution.
+
+## Where this is
+
+Jorvi is pre-launch. The engine, refunds, multi-tenancy, signed webhooks and hosted checkout are built and tested. Settlement runs against a simulated client today, and the live on-chain client swaps one adapter without touching anything above it.
+
+More soon.
+
+---

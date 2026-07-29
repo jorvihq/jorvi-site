@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:fh="http://purl.org/syndication/history/1.0"><channel><title>Jorvi | Blog</title><description>The payments infrastructure for the self-custody era.</description><link>https://jorvi.io/</link><language>en</language><fh:complete/><atom:link rel="self" href="https://jorvi.io/blog/rss.xml"/><item><title>A payment gateway should not hold your money</title><link>https://jorvi.io/blog/gateway-should-not-hold-your-money/</link><guid isPermaLink="true">https://jorvi.io/blog/gateway-should-not-hold-your-money/</guid><description>Most gateways park your settlement in an account you do not control. There is a shape where that step does not exist.</description><pubDate>Tue, 28 Jul 2026 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;Most payment gateways that accept digital assets work the way a card processor works. The payer pays the gateway. The gateway holds the funds, applies an exchange rate, deducts a fee, and credits a balance. Some time later the merchant requests a payout.&lt;/p&gt;
+&lt;p&gt;Every one of those steps is a choice, and most of them exist because of an assumption inherited from card rails: that somebody in the middle has to hold the money while the transaction clears.&lt;/p&gt;
+&lt;p&gt;On-chain, that assumption does not hold.&lt;/p&gt;
+&lt;div&gt;&lt;h2 id=&quot;what-the-middle-step-actually-costs&quot;&gt;What the middle step actually costs&lt;/h2&gt;&lt;/div&gt;
+&lt;p&gt;Holding merchant funds, even briefly, changes what a company is.&lt;/p&gt;
+&lt;p&gt;It brings licensing. It brings safeguarding requirements and segregated accounts. It brings counterparty risk, because the merchant’s balance is now an obligation rather than an asset they hold. It brings settlement delay, because a payout cycle has to exist. And it creates a pool worth attacking, which changes the entire security model.&lt;/p&gt;
+&lt;p&gt;It also creates smaller product problems that are easy to miss. Fast settlement and refunds pull against each other: money already swept out of a pool is harder to reverse, so several gateways restrict or disable refunds on their fastest settlement option. That is not a bug in their implementation. It is a consequence of the shape.&lt;/p&gt;
+&lt;div&gt;&lt;h2 id=&quot;the-shape-without-the-middle-step&quot;&gt;The shape without the middle step&lt;/h2&gt;&lt;/div&gt;
+&lt;p&gt;A payer signs one authorization that sets a spending cap and binds the exact terms of what may be charged. A merchant charges against that authorization. Funds move once, from the payer’s wallet to the merchant’s wallet, and the transfer is the settlement.&lt;/p&gt;
+&lt;p&gt;Jorvi submits the charge instruction and receives the settlement event. It is never a destination.&lt;/p&gt;
+&lt;figure&gt;&lt;pre&gt;flowchart TB
+  subgraph money[&quot; &quot;]
+      direction LR
+      PAYER[&quot;Payer&amp;#x3C;br/&gt;own wallet&quot;] --&gt;|&quot;approves once,&amp;#x3C;br/&gt;sets a per-period cap&quot;| AUTH[&quot;Capped, revocable&amp;#x3C;br/&gt;authorization&quot;]
+      AUTH ==&gt;|&quot;funds move once&quot;| MERCH[&quot;Merchant&amp;#x3C;br/&gt;own wallet&quot;]
+  end
+  Orch[&quot;Jorvi&amp;#x3C;br/&gt;no balance account&quot;]
+  AUTH &amp;#x3C;-.-&gt;|&quot;instruction / event&quot;| Orch
+
+  class AUTH chainNode
+  class Orch orch&lt;/pre&gt;&lt;figcaption&gt;Solid line is money. Dotted is instructions.&lt;/figcaption&gt;&lt;/figure&gt;
+&lt;p&gt;There is no third box in the middle of the solid line, and that is the entire design.&lt;/p&gt;
+&lt;p&gt;Two things follow from the shape rather than from a promise:&lt;/p&gt;
+&lt;p&gt;The cap is enforced on-chain, not by our backend. A compromised Jorvi server still cannot charge a payer more than they approved, because the limit does not live on our side.&lt;/p&gt;
+&lt;p&gt;Revoking the authorization makes future charges fail immediately, and it requires no cooperation from the merchant or from us. The payer does it directly.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Funds settle on-chain directly from payer to merchant. Jorvi never takes custody.&lt;/strong&gt;&lt;/p&gt;
+&lt;div&gt;&lt;h2 id=&quot;why-say-it-this-precisely&quot;&gt;Why say it this precisely&lt;/h2&gt;&lt;/div&gt;
+&lt;p&gt;There is a looser version of this claim that is easy to write and hard to defend. “We never touch your money” is the usual phrasing, and it falls apart the moment someone asks a careful question, because a payment system does orchestrate instructions and does submit transactions. &lt;/p&gt;
+&lt;p&gt;Custody is the word that is exactly true and legally meaningful. We hold no funds, at any point, for any duration. Everything else is orchestration, and orchestration is software.&lt;/p&gt;
+&lt;p&gt;That distinction is worth being pedantic about, because it is the whole difference between a payments company and a regulated financial institution.&lt;/p&gt;
+&lt;div&gt;&lt;h2 id=&quot;where-this-is&quot;&gt;Where this is&lt;/h2&gt;&lt;/div&gt;
+&lt;p&gt;Jorvi is pre-launch. The engine, refunds, multi-tenancy, signed webhooks and hosted checkout are built and tested. Settlement runs against a simulated client today, and the live on-chain client swaps one adapter without touching anything above it.&lt;/p&gt;
+&lt;p&gt;More soon.&lt;/p&gt;</content:encoded><category>payments</category><category>architecture</category></item></channel></rss>

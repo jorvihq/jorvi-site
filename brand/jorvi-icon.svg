@@ -1,0 +1,5 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Jorvi">
+  <rect width="1024" height="1024" fill="#6501FF"/>
+  <path d="M594 408 V573" fill="none" stroke="#F7F7F5" stroke-width="124" stroke-linecap="butt"/>
+  <path d="M594 573 A158 158 0 0 1 436 731" fill="none" stroke="#F7F7F5" stroke-width="124" stroke-linecap="round"/>
+  <circle cx="594" cy="282" r="86" fill="#F7F7F5"/></svg>

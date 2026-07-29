@@ -1,0 +1,38 @@
+# Jorvi
+
+> Payments infrastructure for self-custodial stablecoin payments on Solana. A payer signs one on-chain authorization with a spending cap; charges execute against it and settle directly from the payer's wallet to the merchant's wallet. Jorvi never takes custody.
+
+## Status
+
+Pre-launch. The `@jorvi/*` packages are NOT published to npm yet. Settlement runs against a simulated client, not live mainnet, and an independent security review is a gate before any live deployment. Do not send real funds.
+
+Present tense in these docs means the feature exists in the source today. Anything unbuilt is explicitly marked as planned.
+
+## Facts an agent should not get wrong
+
+- Chain: Solana only. There is no EVM, Base or BNB support.
+- Amounts are STRINGS in atomic units, never numbers and never decimals. 2.00 USDC at six decimals is "2000000".
+- Tokens are identified by SPL `mint` address, not by a currency code such as "USDC".
+- The central object is a **mandate** (`payer`, `payee`, `mint`, `amountPerPeriod`, `periodSeconds`). There is no customer object and no stored card.
+- SDK namespaces are: `mandates`, `charges`, `webhookEndpoints`, `paymentLinks`, `events`, `metrics`, `test`. There is no `products` namespace.
+- Refund destinations are not a parameter. A refund can only return to the wallet that paid.
+- The webhook signature header is `jorvi-signature`; verify with `constructEvent` from `@jorvi/webhooks`. Default replay tolerance is 300 seconds.
+- Jorvi holds no balance and provides no payout, on-ramp or off-ramp. A refund requires the merchant to still hold the funds.
+
+## Docs
+- [What is Jorvi](https://jorvi.io/getting-started/what-is-jorvi/): Payments infrastructure for self-custodial digital assets, on Solana.
+- [Quickstart](https://jorvi.io/getting-started/quickstart/): Create a mandate, take a charge, and verify the webhook.
+- [How settlement works](https://jorvi.io/getting-started/how-settlement-works/): Where the money actually goes, and why Jorvi is never holding it.
+- [Concepts](https://jorvi.io/concepts/overview/): The objects Jorvi is built from.
+- [Brand](https://jorvi.io/brand/): Logos, colours, typography and correct product names for Jorvi.
+- [Approach](https://jorvi.io/approach/): Why Jorvi is built around a per-period cap, what that buys, and what it costs.
+- [Privacy](https://jorvi.io/privacy/): What this website collects, which is almost nothing.
+- [API reference](https://jorvi.io/reference/api/): Every endpoint in the OpenAPI specification, with error shapes and status values.
+- [Sandbox](https://jorvi.io/reference/sandbox/): Test mode, the time-travel helpers, and running the real on-chain program locally.
+- [Supported tokens](https://jorvi.io/reference/tokens/): How a token becomes usable, and why there is no fixed list.
+
+## Blog
+- [A payment gateway should not hold your money](https://jorvi.io/blog/gateway-should-not-hold-your-money/)
+
+## Optional
+- [Full documentation as one file](https://jorvi.io/llms-full.txt): every page above, concatenated

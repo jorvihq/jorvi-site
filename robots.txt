@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Generated agent-facing summaries of this documentation:
+#   https://jorvi.io/llms.txt
+#   https://jorvi.io/llms-full.txt
+
+Sitemap: https://jorvi.io/sitemap-index.xml

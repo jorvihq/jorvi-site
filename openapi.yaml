@@ -1,0 +1,250 @@
+openapi: 3.0.3
+info:
+  title: Jorvi API
+  version: 0.1.0
+  description: |
+    Non-custodial autopay/subscriptions for stablecoins (Solana-first).
+    Authenticate server-side calls with your secret key (`Authorization: Bearer sk_test_...`).
+    Browser checkout endpoints authenticate with a per-mandate `client_secret` instead —
+    the secret key must never reach the browser. All token amounts are decimal strings in
+    atomic units (USDC has 6 decimals). This file is the source of truth for the portal's
+    multi-language samples and for generated SDKs.
+servers:
+  - url: http://127.0.0.1:4390
+    description: Local development
+security:
+  - secretKey: []
+paths:
+  /v1/merchants:
+    post:
+      summary: Create a merchant account (signup)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Merchant created. Keys are returned ONCE — store them securely.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, enum: [merchant] }
+                  id: { type: string }
+                  name: { type: string }
+                  keys:
+                    type: object
+                    properties:
+                      test: { type: string, description: "sk_test_... secret key" }
+                      live: { type: string, description: "sk_live_... secret key" }
+  /v1/mandates:
+    post:
+      summary: Create a subscription mandate
+      description: |
+        Creates the on-chain plan and returns the mandate. Without `autoAuthorize` (production),
+        the mandate is `pending` and includes `client_secret` for the browser checkout, where the
+        payer authorizes autopay in their own wallet. `trialSeconds` defers the first auto-debit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payer, payee, mint, amountPerPeriod, periodSeconds]
+              properties:
+                payer: { type: string, description: Payer wallet address }
+                payee: { type: string, description: Merchant wallet address }
+                mint: { type: string, description: SPL token mint (e.g. USDC) }
+                amountPerPeriod: { type: string, description: Atomic units, decimal string }
+                periodSeconds: { type: integer }
+                maxPeriods: { type: integer, nullable: true }
+                trialSeconds: { type: integer, description: Free-trial length; first charge lands at trial end }
+                autoAuthorize: { type: boolean, description: TEST MODE ONLY — simulate wallet authorization }
+      responses:
+        "201":
+          description: The mandate (plus one-time `client_secret`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mandate" }
+  /v1/mandates/{id}:
+    get:
+      summary: Retrieve a mandate
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200":
+          description: The mandate.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Mandate" } } }
+        "404": { description: Not found (or owned by another merchant) }
+  /v1/mandates/{id}/charges:
+    get:
+      summary: List a mandate's charges
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200":
+          description: Charge list.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ChargeList" } } }
+  /v1/mandates/{id}/refunds:
+    get:
+      summary: List a mandate's refunds
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200":
+          description: Refund list.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RefundList" } } }
+  /v1/mandates/{id}/revoke:
+    post:
+      summary: Cancel a subscription (merchant-side; stops future pulls)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200":
+          description: The revoked mandate.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Mandate" } } }
+  /v1/charges/{id}/refund:
+    post:
+      summary: Refund a settled charge (full or partial)
+      description: Non-custodial payee→payer transfer. Excludes only the refund tx's network fee.
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: string, description: Atomic units; omit for full remaining }
+                reason: { type: string }
+      responses:
+        "201":
+          description: The refund.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Refund" } } }
+  /v1/webhook_endpoints:
+    post:
+      summary: Register a webhook endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+      responses:
+        "201":
+          description: Endpoint created; `secret` (whsec_...) is shown once.
+    get:
+      summary: List webhook endpoints (secrets masked)
+      responses:
+        "200": { description: Endpoint list }
+  /v1/events:
+    get:
+      summary: List delivered events (newest first)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: Event list }
+  /v1/checkout/mandates/{id}:
+    get:
+      summary: "[Browser] Checkout view of a mandate"
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/id" }
+        - { $ref: "#/components/parameters/clientSecret" }
+      responses:
+        "200": { description: Limited mandate view }
+        "401": { description: Invalid client_secret }
+  /v1/checkout/mandates/{id}/instruction:
+    post:
+      summary: "[Browser] Get the wallet authorization instruction"
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/id" }
+        - { $ref: "#/components/parameters/clientSecret" }
+      responses:
+        "200": { description: "{ instruction: base64 }" }
+  /v1/checkout/mandates/{id}/refresh:
+    post:
+      summary: "[Browser] Re-check on-chain authorization; activates + settles first charge"
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/id" }
+        - { $ref: "#/components/parameters/clientSecret" }
+      responses:
+        "200": { description: Updated checkout view }
+components:
+  securitySchemes:
+    secretKey:
+      type: http
+      scheme: bearer
+      description: "Secret API key: sk_test_... or sk_live_..."
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    clientSecret:
+      name: client_secret
+      in: query
+      required: true
+      schema: { type: string }
+  schemas:
+    Mandate:
+      type: object
+      properties:
+        object: { type: string, enum: [mandate] }
+        id: { type: string }
+        merchantId: { type: string }
+        payer: { type: string }
+        payee: { type: string }
+        mint: { type: string }
+        amountPerPeriod: { type: string }
+        periodSeconds: { type: integer }
+        maxPeriods: { type: integer, nullable: true }
+        startAt: { type: integer }
+        expiresAt: { type: integer, nullable: true }
+        status: { type: string, enum: [pending, active, revoked, expired, completed] }
+        createdAt: { type: integer }
+        periodsCharged: { type: integer }
+        trialEndsAt: { type: integer, nullable: true }
+        fundsSufficientAtSignup: { type: boolean }
+        client_secret: { type: string, description: Present on create only }
+    Charge:
+      type: object
+      properties:
+        object: { type: string, enum: [charge] }
+        id: { type: string }
+        mandateId: { type: string }
+        periodIndex: { type: integer }
+        amount: { type: string }
+        dueAt: { type: integer }
+        status: { type: string, enum: [scheduled, processing, succeeded, retrying, abandoned, skipped] }
+        attempts: { type: integer }
+        txSignature: { type: string, description: On-chain settlement proof }
+        refundedAmount: { type: string }
+    Refund:
+      type: object
+      properties:
+        object: { type: string, enum: [refund] }
+        id: { type: string }
+        chargeId: { type: string }
+        mandateId: { type: string }
+        amount: { type: string }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        txSignature: { type: string }
+    ChargeList:
+      type: object
+      properties:
+        object: { type: string, enum: [list] }
+        data: { type: array, items: { $ref: "#/components/schemas/Charge" } }
+    RefundList:
+      type: object
+      properties:
+        object: { type: string, enum: [list] }
+        data: { type: array, items: { $ref: "#/components/schemas/Refund" } }
