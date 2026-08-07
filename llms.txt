@@ -25,11 +25,15 @@ Present tense in these docs means the feature exists in the source today. Anythi
 - [How settlement works](https://jorvi.io/getting-started/how-settlement-works/): Where the money actually goes, and why Jorvi is never holding it.
 - [Concepts](https://jorvi.io/concepts/overview/): The objects Jorvi is built from.
 - [Brand](https://jorvi.io/brand/): Logos, colours, typography and correct product names for Jorvi.
-- [Approach](https://jorvi.io/approach/): Why Jorvi is built around a per-period cap, what that buys, and what it costs.
+- [Approach: why a cap, not an allowance](https://jorvi.io/approach/): The design decision behind Jorvi, what it buys, and the three things it costs.
+- [Accept a payment](https://jorvi.io/getting-started/accept-a-payment/): Sell something and get paid in stablecoins, using only HTTP. No SDK, no npm install.
+- [Integration options](https://jorvi.io/getting-started/integration-options/): Hosted page, your own checkout, or the SDK. What each costs you and which is ready.
 - [Privacy](https://jorvi.io/privacy/): What this website collects, which is almost nothing.
 - [API reference](https://jorvi.io/reference/api/): Every endpoint in the OpenAPI specification, with error shapes and status values.
+- [Errors](https://jorvi.io/reference/errors/): Every error the API returns, what causes it, and what to do about it.
 - [Sandbox](https://jorvi.io/reference/sandbox/): Test mode, the time-travel helpers, and running the real on-chain program locally.
 - [Supported tokens](https://jorvi.io/reference/tokens/): How a token becomes usable, and why there is no fixed list.
+- [Webhooks](https://jorvi.io/reference/webhooks/): The events Jorvi sends, how to verify them, and what happens when your server is down.
 
 ## Blog
 - [A payment gateway should not hold your money](https://jorvi.io/blog/gateway-should-not-hold-your-money/)

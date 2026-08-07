@@ -61,7 +61,12 @@ Pages describing anything not yet built are marked. Where this documentation use
 URL: https://jorvi.io/getting-started/quickstart/
 Description: Create a mandate, take a charge, and verify the webhook.
 
-Accept recurring stablecoin payments on Solana without holding funds.
+Accept stablecoin payments on Solana without holding funds.
+
+Recurring billing is **coming soon**. What runs today is the one-time purchase, end to end. The
+subscription flow below is real code against the real interface, and a deployment that cannot drive
+renewals refuses to create a subscription rather than accepting an authorization it will never act
+on. See [Errors](/reference/errors/) for `recurring_unavailable`.
 
 The `@jorvi/*` packages are not published to npm yet, and settlement runs against a simulated client. The interface below is taken from the current source, so it is accurate today, but treat it as subject to change until the first release.
 
@@ -462,10 +467,10 @@ Press, partnership and general enquiries: **[hello@jorvi.io](mailto:hello@jorvi.
 
 ---
 
-# Approach
+# Approach: why a cap, not an allowance
 
 URL: https://jorvi.io/approach/
-Description: Why Jorvi is built around a per-period cap, what that buys, and what it costs.
+Description: The design decision behind Jorvi, what it buys, and the three things it costs.
 
 The [settlement page](/getting-started/how-settlement-works/) explains how Jorvi works. This explains why it is shaped that way, including the parts that are a trade-off rather than a win.
 
@@ -523,13 +528,264 @@ We did not invent per-period authorization. Solana shipped it natively. Coinbase
 
 Independent groups arriving at the same shape is the strongest signal available that it is the right one. We are not asking anyone to bet on an unproven mechanism. We are building the orchestration layer above one that is becoming standard: the scheduling, the retries, the refunds, the receipts, the webhooks and the developer experience, none of which the chain gives you.
 
-Pre-launch. Settlement currently runs against a simulated client that models caps, terms and revocation faithfully, and an independent security review is a gate before any live deployment. Do not send real funds yet. [What is built](/) is kept current, including the parts that are not.
+Pre-launch. One-time purchases settle on-chain on a test network, and the build refuses to run against mainnet. Recurring billing is coming soon: the cap is enforced by the program today, and nothing drives a second charge yet. An independent security review is a gate before any live deployment. Do not send real funds yet. [What is built](/) is kept current, including the parts that are not.
 
 ## Related
 
 - [How settlement works](/getting-started/how-settlement-works/): the money path, with diagrams
 - [Quickstart](/getting-started/quickstart/): the integration
 - [Sandbox](/reference/sandbox/): run the real on-chain program locally
+
+---
+
+# Accept a payment
+
+URL: https://jorvi.io/getting-started/accept-a-payment/
+Description: Sell something and get paid in stablecoins, using only HTTP. No SDK, no npm install.
+
+This is the shortest path from nothing to money arriving in your own wallet. Every request below
+is plain HTTP, so it works from any language, from `curl`, and from an agent that can only make
+web requests.
+
+**One-time purchases.** A customer pays once, and content unlocks. This is the path that is
+finished and proven end to end against a real chain.
+
+Recurring subscriptions are a different page and are **not** available yet: a deployment that
+cannot drive renewals refuses to create subscription products rather than accepting an
+authorization for billing that will never run. See [Errors](/reference/errors/) under
+`recurring_unavailable`.
+
+## What you need
+
+- A Jorvi server URL. Everything below uses `$JORVI_API` for it.
+- A Solana wallet you control, to receive money. Jorvi never holds funds, so payments settle
+  directly from your customer's wallet to this address.
+
+1. **Create an account**
+
+   You get two API keys back. They are shown **once** and are not recoverable, because only a hash
+   is stored. The response also sets a session cookie, which the next step needs.
+
+   ```bash
+   curl -i -X POST "$JORVI_API/v1/merchants" \
+     -H 'content-type: application/json' \
+     -d '{
+       "name": "Harbour Lane Coffee",
+       "email": "you@example.com",
+       "password": "a-long-enough-password",
+       "acknowledged": true
+     }'
+   ```
+
+   `acknowledged` is required and must be `true`. It records that you understand Jorvi never holds
+   your money and cannot reverse a settled payment. Omit it and you get
+   `acknowledgement_required`.
+
+   Keep three things from the response:
+
+   - `keys.test` is the one to use. Everything on this page works with it.
+   - `keys.live` is the same account in live mode. On a devnet deployment it settles on the
+     same test chain, so there is no reason to reach for it yet. It exists so the switch to
+     mainnet is a key change rather than a new account.
+   - the `jorvi_session` cookie, which the next step needs. No API key can replace it.
+
+2. **Prove the wallet you want to be paid into**
+
+   Anyone can type an address. A **typed** address is unverified and cannot receive live payments,
+   because a typo would send your revenue somewhere you do not control and nothing on chain can
+   bring it back.
+
+   Ask for a challenge:
+
+   ```bash
+   curl "$JORVI_API/v1/payout_wallet/challenge?address=$WALLET" \
+     -H "cookie: jorvi_session=$SESSION"
+   ```
+
+   Sign the `message` it returns with that wallet's key (an ordinary ed25519 signature over the
+   UTF-8 bytes, base64 encoded), then:
+
+   ```bash
+   curl -X POST "$JORVI_API/v1/payout_wallet" \
+     -H 'content-type: application/json' \
+     -H "cookie: jorvi_session=$SESSION" \
+     -d '{"address":"'"$WALLET"'","message":"'"$MESSAGE"'","signature":"'"$SIGNATURE"'"}'
+   ```
+
+   Nothing moves and no fee is paid. This proves you hold the key, and it is off-chain and free.
+
+   `/v1/payout_wallet` deliberately refuses an API key with `session_required`. Naming where your
+   money goes is a decision that must involve a signed-in human, so a stolen key cannot redirect
+   your revenue. That is why this is the one step you cannot do from a server-side integration.
+
+3. **Create something to sell**
+
+   ```bash
+   curl -X POST "$JORVI_API/v1/products" \
+     -H "authorization: Bearer $KEY" \
+     -H 'content-type: application/json' \
+     -d '{
+       "name": "The Coffee Guide",
+       "sellMode": "once",
+       "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+       "priceOnce": "3000000",
+       "periodSeconds": 3600,
+       "contentTitle": "Members",
+       "contentBody": "The good stuff."
+     }'
+   ```
+
+   - `sellMode: "once"` sells it outright. Leave it out and the product is a subscription, which
+     this deployment refuses.
+   - **Prices are strings in atomic units.** USDC has six decimals, so `"3000000"` is 3.00 USDC.
+     Never a float: `3.00` in JSON is a binary fraction and money is not.
+   - `mint` must be a token the platform accepts. Ask for the list with your API key:
+
+     ```bash
+     curl "$JORVI_API/v1/tokens" -H "authorization: Bearer $KEY"
+     ```
+
+     This route needs the key; without it you get `401 unauthenticated`. Anything not on that
+     list is refused with `mint_not_allowed`.
+   - **Every field in that example is required**, including on a one-time product: `name`,
+     `sellMode`, `mint`, `priceOnce`, `periodSeconds`, `contentTitle` and `contentBody`. Omit
+     any one and you get `parameter_missing` naming it.
+   - `periodSeconds` **must be a whole number of hours**, meaning a multiple of `3600`. `1800`
+     and `5400` are both refused with `parameter_invalid`. It is required on a one-time product
+     even though nothing recurs, which is a wart in the current API; pass `3600` and move on.
+
+   The response carries an `id` and a `url`. **`url` is a PATH, not a full address**, which is something
+   like `/product/prod_a66095…`. Join it to your server to get the link you share:
+
+   ```
+   $JORVI_API + url   ->   https://pay.example.com/product/prod_a66095…
+   ```
+
+   That page is a working checkout. Share it and you are selling; there is nothing else to build.
+
+4. **Let someone buy it**
+
+   If you are happy with the hosted page, you are finished. To drive it yourself, open a purchase:
+
+   ```bash
+   curl -X POST "$JORVI_API/v1/products/$PRODUCT_ID/buy" \
+     -H 'content-type: application/json' \
+     -d '{"payer":"'"$PAYER_WALLET"'"}'
+   ```
+
+   You get back a `mandateId`, a `clientSecret`, and an `instruction`. Despite the name,
+   `instruction` is a **complete unsigned Solana transaction**, base64 encoded, not a single
+   instruction within one. Deserialize it, have the payer sign it in their own wallet, and send
+   it back. Only they can sign it, and the platform never holds a key that could.
+
+   Hand the signed transaction back:
+
+   ```bash
+   curl -X POST "$JORVI_API/v1/checkout/mandates/$MANDATE_ID/broadcast?client_secret=$SECRET" \
+     -H 'content-type: application/json' \
+     -d '{"signedTransaction":"'"$SIGNED"'"}'
+   ```
+
+   The response carries the `txSignature` the chain returned. The money has moved: from the
+   payer's wallet to yours, with no stop in between.
+
+5. **Check what they bought is unlocked**
+
+   ```bash
+   curl "$JORVI_API/v1/products/$PRODUCT_ID/access?payer=$PAYER_WALLET&client_secret=$SECRET"
+   ```
+
+   Returns `entitled` and, when entitled, the gated `contentBody`.
+
+   The `client_secret` is required. Without a proof this route answers `401
+   wallet_proof_required` rather than saying whether that wallet has paid: entitlement is not
+   readable by anyone who can guess an address.
+
+## What just happened
+
+The payer signed one transaction, paying their own network fee, moving their own tokens directly
+to your wallet. Jorvi built the transaction and broadcast it. At no point did it hold your money,
+and at no point could it have.
+
+## Where to go next
+
+- **[Errors](/reference/errors/)**, every code the API returns and what to do about each.
+- **[Webhooks](/reference/webhooks/)**, how to be told a payment happened instead of polling.
+- **[Integration options](/getting-started/integration-options/)**: hosted page, embedded button,
+  or driving it yourself, and how to choose.
+
+---
+
+# Integration options
+
+URL: https://jorvi.io/getting-started/integration-options/
+Description: Hosted page, your own checkout, or the SDK. What each costs you and which is ready.
+
+Three ways to take a payment. They are not tiers: the hosted page is not a lesser version of the
+API, it is the same settlement with less of your code in the path.
+
+## 1. The hosted page, no code
+
+Every product you create comes with a checkout page. Create the product, join its `url` to your
+server address, and share the link.
+
+```
+POST /v1/products   ->   { "id": "prod_…", "url": "/product/prod_…" }
+                          share $JORVI_API + url
+```
+
+The page handles wallet detection, the approval prompt, the on-chain confirmation, and unlocking
+what was bought. You write nothing.
+
+**Choose this if** you are selling a file, a document, access to something, or you want to be
+taking money today. It is the only option with nothing to maintain when a wallet ships a breaking
+change.
+
+**The trade** is that the page is ours. It carries your product name and price, not your design.
+
+## 2. Your own checkout, plain HTTP
+
+Drive the same flow yourself. Four requests, no dependencies, no SDK:
+
+1. `POST /v1/products/:id/buy` → a `mandateId`, a `clientSecret`, and `instruction`, which is a
+   complete unsigned transaction in base64
+2. The payer signs it in their wallet. In a browser that is their extension
+3. `POST /v1/checkout/mandates/:id/broadcast` → the signature the chain returned
+4. `GET /v1/products/:id/access` → what they bought
+
+Walked through step by step in [Accept a payment](/getting-started/accept-a-payment/).
+
+**Choose this if** the checkout must look like your product, or you are integrating from a
+language, a bot, or an agent rather than a browser.
+
+**The trade** is that connecting a wallet and presenting a signing prompt is now yours to build and
+to keep working.
+
+Neither option asks you to hold a key, custody funds, or handle a refund path for money you touched
+on the way through. The payer signs; the tokens move from their wallet to yours. There is no
+in-between account, because there is nowhere for one to be.
+
+## 3. The SDK, not yet
+
+`@jorvi/sdk` and `@jorvi/checkout` exist in the repository and are **not published to npm**. Until
+they are, an `npm install` will not find them, and this page will not pretend otherwise.
+
+Use option 1 or 2. Both are stable HTTP that a published SDK would call anyway.
+
+## Which to start with
+
+Start with the **hosted page**, even if you intend to build your own. It proves the account, the
+payout wallet and the token are all configured correctly before any of your code is involved, so
+when you do move to option 2 you are debugging one thing rather than four.
+
+## What to know either way
+
+- **Prices are strings in atomic units.** USDC has six decimals, so `"3000000"` is 3.00.
+- **Getting told about a payment** is [Webhooks](/reference/webhooks/). Do not poll.
+- **Every failure is a typed `code`**, listed in [Errors](/reference/errors/). Branch on the code,
+  never on the message.
+- **Subscriptions are not available yet.** A deployment that cannot drive renewals refuses to
+  create them rather than accepting an authorization for billing that will never run.
 
 ---
 
@@ -650,6 +906,118 @@ Use a key derived from your own order identifier, not a random value, or a retry
 
 ---
 
+# Errors
+
+URL: https://jorvi.io/reference/errors/
+Description: Every error the API returns, what causes it, and what to do about it.
+
+Every failure is JSON with the same shape. There is no other error format.
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "mint_not_allowed",
+    "message": "That token is not accepted on this platform.",
+    "param": "mint"
+  }
+}
+```
+
+**Branch on `code`, never on `message`.** Codes are contract; messages are written for humans and
+will be reworded. `param` names the offending field when one field is at fault.
+
+`type` is a coarse grouping and does **not** map cleanly onto the status: `session_required` is a
+403 with type `invalid_request_error`, not `authentication_error`. Branch on `code` and read
+`type` as a hint only.
+
+## Retry or not
+
+The single most useful distinction, because getting it wrong either loses money or duplicates it.
+
+| Status | Retry? |
+|---|---|
+| **400, 403, 404, 409** | **No.** The request is wrong or the state has moved on. Retrying sends the identical request and gets the identical answer. |
+| **401** | Only after fixing credentials. A retry with the same key fails identically. |
+| **429** | **Yes**, after `retry-after` seconds. The response carries `retry-after` and `ratelimit-*` headers. |
+| **500** | **Yes**, with backoff, and with an `Idempotency-Key` on anything that creates. |
+| **413** | No. Send less. |
+
+## Authentication
+
+| Code | Status | What it means |
+|---|---|---|
+| `unauthenticated` | 401 | No API key and no session. Send `authorization: Bearer sk_...` or sign in. |
+| `invalid_credentials` | 401 | The email or password is wrong. Deliberately does not say which. |
+| `insufficient_scope` | 403 | A read-only key attempted a write. Scope is enforced by HTTP method: `read` keys may only GET. |
+| `session_required` | 403 | This route refuses API keys and needs a signed-in human. It guards `/v1/payout_wallet`, so a stolen key cannot redirect where your money lands. |
+| `owner_required` | 403 | A platform-administration route. Not available to merchants. |
+| `wallet_proof_required` | 401 | You asked whether a wallet is entitled without proving you are entitled to ask. Send the purchase's `client_secret`. (A payer wallet-session route also satisfies this; it is used by the hosted wallet page and is not documented for integrators yet.) |
+| `wallet_not_signed_in` | 401 | A payer-facing route needs a wallet session. Sign a challenge first. |
+| `invalid_wallet_signature` | 401 | The signature does not verify against the address, or the challenge expired or was already used. Request a fresh one; each is single-use. |
+| `invalid_client_secret` | 401 | The `client_secret` does not match this mandate. They are scoped to one purchase and one payer. |
+
+## Your request
+
+| Code | Status | What it means |
+|---|---|---|
+| `parameter_missing` | 400 | A required field is absent. `param` names it. |
+| `parameter_invalid` | 400 | Present but unusable: a malformed address, a negative amount, an amount that is not a string of atomic units. |
+| `invalid_json` | 400 | The body did not parse. |
+| `request_too_large` | 413 | Over 256 KiB. Counted as the bytes arrive, so the connection is closed rather than buffered. |
+| `resource_missing` | 404 | No such product, mandate, charge or link, or it is not yours. Tenancy failures look identical to absence on purpose. |
+| `unknown_route` | 404 | No such endpoint. |
+| `email_taken` | 409 | An account already exists with that email. |
+| `acknowledgement_required` | 400 | Signup needs `acknowledged: true`, recording that you understand Jorvi never holds funds and cannot reverse a settled payment. |
+
+## Selling
+
+| Code | Status | What it means |
+|---|---|---|
+| `recurring_unavailable` | 400 | This deployment settles one-time purchases only. Set `sellMode: "once"`. It refuses rather than accepting a subscription it cannot renew. |
+| `not_for_sale_once` | 400 | You tried to buy outright something offered only by subscription. |
+| `not_for_sale_subscription` | 400 | You tried to subscribe to something sold only outright. |
+| `no_payout_wallet` | 400 | Set and prove a payout wallet before taking live payments. There is nowhere for the money to go. |
+| `mint_not_allowed` | 400 | That token is not on the platform registry. `GET /v1/tokens` lists what is accepted, and that route needs `authorization: Bearer $KEY`. |
+| `decimals_unsupported` | 400 | The token's decimals are outside what the pricing code handles safely. |
+| `floor_token` | 400 | The platform's default token cannot be disabled or removed. |
+
+## Paying
+
+| Code | Status | What it means |
+|---|---|---|
+| `transaction_not_issued` | 400 | The signed transaction is not the one we handed you. Only the exact transaction Jorvi issued can pay an order. |
+| `broadcast_unavailable` | 400 | No chain is configured behind this deployment, so nothing can be broadcast. |
+| `purchases_unavailable` | 400 | One-time purchases need a chain. Same cause. |
+| `receipts_unavailable` | 400 | Reading a receipt needs a chain to read it from. |
+| `onchain_proof_unavailable` | 400 | On-chain wallet proof is not enabled on this deployment. Prove the wallet by signing the challenge message instead, which needs no chain and no fee. |
+| `mandate_not_pending` | 409 | Already activated, or revoked. A mandate is activated once. |
+| `already_revoked` | 409 | It was already cancelled. |
+| `verification_failed` | 402 | Could not confirm the wallet holds enough to start. |
+| `refund_exceeds_charge` | 400 | A refund can never exceed what was received. |
+| `refund_failed` | 400 | The chain refused the refund. `message` carries what it said. |
+| `wallet_verification_failed` | 400 | The wallet ownership proof did not check out. |
+
+## Ours, and rate limits
+
+| Code | Status | What it means |
+|---|---|---|
+| `rate_limit_exceeded` | 429 | Too many requests. Wait `retry-after` seconds. `ratelimit-limit` and `ratelimit-remaining` are on every response, not only refusals. |
+| `request_in_flight` | 409 | The same `Idempotency-Key` is being processed right now. The key is claimed **before** the work, so a double-submit cannot run twice. Wait and retry. |
+| `internal_error` | 500 | Ours. Safe to retry with backoff; use an `Idempotency-Key` on creates. |
+| `test_mode_only` | 400 | A `/v1/test/*` helper on a deployment that has none. Production builds do not construct them, so they cannot be switched on by configuration. |
+
+## Idempotency
+
+Send `Idempotency-Key` on anything that creates. Keys are scoped to your account, so two merchants
+both using `order-1` never collide.
+
+Replaying a key returns the original response. If the first request is still in flight you get
+`request_in_flight` (409) rather than a second execution: the key is claimed before the work
+starts, not after it finishes.
+
+---
+
 # Sandbox
 
 URL: https://jorvi.io/reference/sandbox/
@@ -673,7 +1041,9 @@ Test mode gives you two helpers that do not exist in live mode.
 await jorvi.test.fund({ owner: payerWalletAddress, mint: usdcMintAddress, amount: '10000000' });
 ```
 
-**Move time forward**, which is the one that matters for recurring payments. A monthly mandate is otherwise untestable without waiting a month:
+**Move time forward**, which is the one that matters once recurring billing arrives. A monthly
+mandate is otherwise untestable without waiting a month. Recurring is **coming soon**, so today this
+is how you exercise the schedule rather than how you test a live subscription:
 
 ```ts
 await jorvi.test.advance(2592000);   // 30 days
@@ -771,6 +1141,146 @@ Strings, not numbers. A JavaScript number cannot hold large token amounts exactl
 
 - [API reference](/reference/api/): the endpoints and error shapes
 - [Sandbox](/reference/sandbox/): funding a wallet with a test token
+
+---
+
+# Webhooks
+
+URL: https://jorvi.io/reference/webhooks/
+Description: The events Jorvi sends, how to verify them, and what happens when your server is down.
+
+A webhook is how you learn a payment happened without polling. Jorvi signs every delivery, retries
+a failure for about a day, and gives up honestly rather than silently.
+
+## Registering an endpoint
+
+```bash
+curl -X POST "$JORVI_API/v1/webhook_endpoints" \
+  -H "authorization: Bearer $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://your-server.example/jorvi/webhooks"}'
+```
+
+The response carries a `secret` beginning `whsec_`. **Keep it.** It is what proves a delivery came
+from us rather than from someone who guessed your URL.
+
+A URL we would refuse to deliver to is rejected **here**, at registration, rather than accepted
+and quietly failing forever. A server that will POST to any address a customer names is a
+request-forgery tool, so refused at registration are: private and loopback IP addresses,
+cloud metadata endpoints, and reserved names that can never be public (`localhost` and anything
+under it, `.local`, `.home.arpa`, `.internal`).
+
+A name that merely happens to resolve somewhere private cannot be known without DNS, so that is
+caught at delivery instead: the host is resolved and checked on **every** attempt, not once at
+registration, because the answer can change after you save it.
+
+## The events
+
+| Event | When |
+|---|---|
+| `mandate.created` | An authorization was created. For a one-time purchase, when the order opens. |
+| `mandate.activated` | The payer's signature landed on chain. |
+| `charge.succeeded` | **Money moved.** Carries the `txSignature` the chain returned. |
+| `charge.failed` | An attempt failed and will be retried. |
+| `charge.abandoned` | Retries are exhausted, or the allowance is gone. No more attempts. |
+| `charge.scheduled` | A future charge was placed on the schedule. |
+| `charge.skipped` | A charge was skipped because the mandate was no longer active. |
+| `mandate.completed` | Nothing further will be charged. For a one-time purchase, immediately after payment. |
+| `mandate.revoked` | The payer cancelled on chain, or dunning gave up. |
+| `mandate.expired` | It passed its end date. |
+
+**If you only handle one, handle `charge.succeeded`.** That is the one that means you have been
+paid and should ship the thing.
+
+On a deployment that settles one-time purchases only, the recurring events (`charge.scheduled`,
+`charge.failed`, `charge.abandoned`) do not occur.
+
+## Verifying a delivery
+
+Every request carries a `jorvi-signature` header:
+
+```
+jorvi-signature: t=1780599650,v1=5e884898da28047151d0e56f8dc6292773603d0d6aabbdd6...
+```
+
+`v1` is `HMAC-SHA256(secret, "<t>.<raw body>")` in hex. The timestamp is inside the MAC, which is
+what stops someone replaying a captured delivery at you later.
+
+**Verify against the raw bytes**, before any JSON parsing. Re-serialising changes whitespace and
+key order, and the signature is over what was sent, not over what your parser reconstructed.
+
+```ts
+
+app.post('/jorvi/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
+  let event;
+  try {
+    event = constructEvent(
+      req.body.toString('utf8'),           // raw, not req.body as JSON
+      req.headers['jorvi-signature'],
+      process.env.JORVI_WEBHOOK_SECRET,
+    );
+  } catch {
+    return res.status(400).send('bad signature');   // do not process it
+  }
+
+  switch (event.type) {
+    case 'charge.succeeded':
+      // grant access, ship the thing. Idempotently: see below.
+      break;
+  }
+  res.json({ received: true });
+});
+```
+
+Doing it by hand in another language: compute the HMAC, compare in **constant time**, and reject
+anything whose `t` is outside your tolerance. The default tolerance is **300 seconds**.
+
+## Respond quickly
+
+Return `2xx` as soon as you have stored the event. Any other status, or no response, counts as a
+failure and the delivery is retried.
+
+Do the slow work afterwards. A handler that takes ten seconds to send an email is a handler that
+looks like an outage to us and gets retried while it is still working.
+
+## Handle duplicates
+
+**You will occasionally receive the same event twice.** That is inherent: if your server processes
+a delivery and then fails to respond, we cannot tell that apart from never having received it, so
+we retry. At-least-once delivery is the strongest thing that can honestly be said.
+
+Deduplicate on `event.id`, which is stable across retries. Record it, and make the second arrival a
+no-op.
+
+## What happens when your server is down
+
+The first attempt is immediate. If it fails, the delivery becomes a stored row and is retried on
+this schedule:
+
+```
+1 minute → 5 minutes → 15 minutes → 1 hour → 3 hours → 6 hours → 12 hours
+```
+
+About 22 hours of patience in total, then it is marked exhausted and no longer retried.
+
+Two things worth knowing:
+
+**It survives our restarts.** Pending deliveries are rows in the database, not entries in a queue
+in memory, so a deploy on our side does not drop your events. This is deliberate: a deploy is
+exactly when an in-memory queue would die.
+
+**Each attempt is signed afresh.** A retry carries a current timestamp, not the timestamp of the
+first attempt. If it did not, a delivery retried an hour later would fall outside your tolerance
+window and you would reject precisely the deliveries that most needed to arrive.
+
+A URL that our outbound policy refuses is **not** retried. Retrying cannot change that answer, and
+each attempt would be another connection to somewhere we have already decided not to go.
+
+## If a secret leaks
+
+Register a new endpoint and stop trusting the old secret in your handler. Rotating a secret in
+place, and deleting an endpoint, are not yet exposed on the API. Said plainly rather than left
+for you to discover: there is currently no way to retire a `whsec_` other than to ignore it.
 
 ---
 

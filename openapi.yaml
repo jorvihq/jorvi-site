@@ -5,7 +5,7 @@ info:
   description: |
     Non-custodial autopay/subscriptions for stablecoins (Solana-first).
     Authenticate server-side calls with your secret key (`Authorization: Bearer sk_test_...`).
-    Browser checkout endpoints authenticate with a per-mandate `client_secret` instead —
+    Browser checkout endpoints authenticate with a per-mandate `client_secret` instead,
     the secret key must never reach the browser. All token amounts are decimal strings in
     atomic units (USDC has 6 decimals). This file is the source of truth for the portal's
     multi-language samples and for generated SDKs.
@@ -15,6 +15,48 @@ servers:
 security:
   - secretKey: []
 paths:
+  /livez:
+    get:
+      summary: Is the process alive
+      description: >-
+        Answers whether this process is running, and checks nothing else. No credential is needed,
+        because a checker that has to hold an API key is not a checker. It reports on no dependency
+        on purpose: this is the signal a supervisor acts on by RESTARTING, and an outage at the RPC
+        endpoint is not something a restart can fix. Use /readyz to decide whether to send traffic.
+        Answers HEAD as well as GET, and is never rate limited.
+      security: []
+      responses:
+        "200":
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+  /readyz:
+    get:
+      summary: Should this instance receive traffic
+      description: >-
+        Answers whether the store and the chain are both reachable, which is what settling a payment
+        needs. No credential is needed, and the body is deliberately minimal: it carries no version,
+        no endpoint, no slot, no key and no count of anything, because it is readable by anyone.
+        The chain answer is cached and single flighted, so polling this cannot exhaust the RPC quota
+        behind it. Answers HEAD as well as GET, and is never rate limited.
+      security: []
+      responses:
+        "200":
+          description: Ready. The store answered and the chain is reachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: >-
+            Not ready. Sent with retry-after. The process is still alive, so this is a reason to
+            route traffic elsewhere rather than to restart anything.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
   /v1/merchants:
     post:
       summary: Create a merchant account (signup)
@@ -30,7 +72,7 @@ paths:
                 name: { type: string }
       responses:
         "201":
-          description: Merchant created. Keys are returned ONCE — store them securely.
+          description: Merchant created. Keys are returned ONCE. Store them securely.
           content:
             application/json:
               schema:
@@ -66,7 +108,7 @@ paths:
                 periodSeconds: { type: integer }
                 maxPeriods: { type: integer, nullable: true }
                 trialSeconds: { type: integer, description: Free-trial length; first charge lands at trial end }
-                autoAuthorize: { type: boolean, description: TEST MODE ONLY — simulate wallet authorization }
+                autoAuthorize: { type: boolean, description: "TEST MODE ONLY. Simulate wallet authorization" }
       responses:
         "201":
           description: The mandate (plus one-time `client_secret`).
@@ -417,6 +459,19 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    Readiness:
+      type: object
+      description: >-
+        Two fields and nothing else. Every value comes from a closed vocabulary, so no message
+        caught from a dependency can reach an unauthenticated caller. A chain of "skipped" means
+        this deployment has no chain configured, which is said rather than reported as healthy.
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          properties:
+            store: { type: string, enum: [ok, down] }
+            chain: { type: string, enum: [ok, down, skipped] }
     Mandate:
       type: object
       properties:
