@@ -1287,6 +1287,7 @@ for you to discover: there is currently no way to retire a `whsec_` other than t
 # Proving you own a payout wallet, without moving funds
 
 URL: https://jorvi.io/blog/proving-a-payout-wallet/
+Description: Before settlement can land in a wallet, we have to know the merchant controls it. A signature is enough. A transfer is not necessary.
 Published: 2026-08-07
 
 Settlement lands directly in a merchant's own wallet. That makes one question load-bearing: does this merchant actually control the address they gave us?
@@ -1314,6 +1315,7 @@ None of this needs a chain at all, which is the point. There is a second path fo
 # A payment gateway should not hold your money
 
 URL: https://jorvi.io/blog/gateway-should-not-hold-your-money/
+Description: Most gateways park your settlement in an account you do not control. There is a shape where that step does not exist.
 Published: 2026-07-28
 
 Most payment gateways that accept digital assets work the way a card processor works. The payer pays the gateway. The gateway holds the funds, applies an exchange rate, deducts a fee, and credits a balance. Some time later the merchant requests a payout.

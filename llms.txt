@@ -36,8 +36,8 @@ Present tense in these docs means the feature exists in the source today. Anythi
 - [Webhooks](https://jorvi.io/reference/webhooks/): The events Jorvi sends, how to verify them, and what happens when your server is down.
 
 ## Blog
-- [Proving you own a payout wallet, without moving funds](https://jorvi.io/blog/proving-a-payout-wallet/)
-- [A payment gateway should not hold your money](https://jorvi.io/blog/gateway-should-not-hold-your-money/)
+- [Proving you own a payout wallet, without moving funds](https://jorvi.io/blog/proving-a-payout-wallet/): Before settlement can land in a wallet, we have to know the merchant controls it. A signature is enough. A transfer is not necessary.
+- [A payment gateway should not hold your money](https://jorvi.io/blog/gateway-should-not-hold-your-money/): Most gateways park your settlement in an account you do not control. There is a shape where that step does not exist.
 
 ## Optional
 - [Full documentation as one file](https://jorvi.io/llms-full.txt): every page above, concatenated
