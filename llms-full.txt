@@ -1075,7 +1075,7 @@ If you are building against the Subscriptions program for reasons unrelated to J
 4. A revoked mandate fails every subsequent charge.
 5. A refund returns to the payer, and one exceeding the received amount is rejected.
 
-Settlement runs against a simulated client today. The live on-chain client is the next milestone, and an independent security review is a gate before any live deployment. Do not put real funds through Jorvi yet.
+One-time purchases settle on a real chain today, proven on a test network. The live on-chain client is the next milestone, and an independent security review is a gate before any live deployment. Do not put real funds through Jorvi yet.
 
 ## Related
 
