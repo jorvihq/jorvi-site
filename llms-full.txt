@@ -1284,6 +1284,33 @@ for you to discover: there is currently no way to retire a `whsec_` other than t
 
 ---
 
+# Proving you own a payout wallet, without moving funds
+
+URL: https://jorvi.io/blog/proving-a-payout-wallet/
+Published: 2026-08-07
+
+Settlement lands directly in a merchant's own wallet. That makes one question load-bearing: does this merchant actually control the address they gave us?
+
+Get it wrong and you have built a way to route someone's revenue to an attacker.
+
+## Why not a test transfer
+
+The usual answer is to ask for a small transfer from the address. It works, and it is a poor experience: it costs money, it costs a transaction, and it means the merchant has to move funds before they have received any.
+
+It also proves less than it looks. It proves someone could spend from that address at that moment, which is what we want, but at the cost of an on-chain action for something that is only ever a question about a key.
+
+## What we do instead
+
+The merchant asks for a challenge. The server issues one bound to their account with an HMAC, so it cannot be replayed against a different merchant or reused after it expires. They sign it with the wallet's key. We verify the ed25519 signature against the address they claim.
+
+No transfer, no fee, no on-chain footprint. Ownership of a key is proven by using the key, which is the whole point of a signature.
+
+The challenge comparison is timing-safe, and the same machinery is what handle claims will reuse, proving control of an address is the same problem whether you are registering a payout wallet or claiming a name.
+
+None of this needs a chain at all, which is the point. There is a second path for merchants who want the link recorded on-chain, and that one is exercised against a real cluster rather than a simulation.
+
+---
+
 # A payment gateway should not hold your money
 
 URL: https://jorvi.io/blog/gateway-should-not-hold-your-money/
